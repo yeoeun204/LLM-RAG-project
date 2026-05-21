@@ -73,8 +73,7 @@ async def upload_material(user_id: int, file: UploadFile = File(...), db: Sessio
 
 # (여기는 원래 네가 가지고 있던 기존 업로드 코드)
 @app.post("/api/v1/materials", status_code=202)
-async def upload_material(...):
-    # ... 기존 내용 ...
+async def upload_material(user_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
     return { ... }
 
 # ==========================================
