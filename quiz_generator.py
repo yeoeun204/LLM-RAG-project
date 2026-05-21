@@ -9,7 +9,7 @@ class QuizGenerator:
 
     def generate_quiz(self, text_content: str):
         # 1. 너무 길면 구글이 힘들어하니까 앞부분 3000자만 잘라서 줌
-        sample_text = text_content[:3000]
+        sample_text = text_content[:15000]
         
         # 2. LLM에게 퀴즈를 만들어달라고 하는 강력한 프롬프트(명령어)
         template_str = """

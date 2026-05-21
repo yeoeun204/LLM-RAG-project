@@ -4,6 +4,10 @@ from sqlalchemy.orm import Session
 from typing import List
 import shutil
 import os
+class UserAnswerSubmit(BaseModel):
+    lecture_id: int
+    question_text: str
+    user_answer: str
 
 import models
 from database import engine, SessionLocal
@@ -65,6 +69,40 @@ async def upload_material(user_id: int, file: UploadFile = File(...), db: Sessio
         "message": "자료 업로드 및 지식 그래프 생성 완료",
         "lecture_id": new_material.id,
         "extracted_concepts": extracted_concepts
+    }
+
+# (여기는 원래 네가 가지고 있던 기존 업로드 코드)
+@app.post("/api/v1/materials", status_code=202)
+async def upload_material(...):
+    # ... 기존 내용 ...
+    return { ... }
+
+# ==========================================
+# 👇 방금 위 코드가 끝나는 줄 바로 아래에 이걸 통째로 붙여넣기! 👇
+# ==========================================
+
+@app.post("/api/v1/quiz/grade")
+async def grade_quiz_answer(submit_data: UserAnswerSubmit):
+    # AI에게 채점과 해설을 부탁하는 프롬프트 작성
+    evaluation_prompt = (
+        "너는 친절한 대학 전공 과목 조교야. "
+        "사용자가 다음 문제에 대해 답안을 제출했어.\n"
+        "문제: {0}\n"
+        "사용자 답안: {1}\n\n"
+        "이 답안이 정답인지 오답인지 판단하고, 왜 그런지 이유를 아주 상세하고 이해하기 쉽게 설명해줘."
+    ).format(submit_data.question_text, submit_data.user_answer)
+    
+    # 랭체인(LangChain) 또는 LLM을 호출해서 프롬프트를 전달하는 부분
+    # 예시: ai_response = llm.predict(evaluation_prompt)
+    
+    # 임시 결과 반환 (나중에 AI 응답으로 교체할 곳!)
+    ai_response = "여기에 AI가 생성한 채점 결과와 맞춤형 해설이 들어갑니다."
+    
+    return {
+        "lecture_id": submit_data.lecture_id,
+        "question": submit_data.question_text,
+        "user_answer": submit_data.user_answer,
+        "ai_feedback": ai_response
     }
 
 # [Phase 2] 답변 제출 및 오답 패턴 분석
