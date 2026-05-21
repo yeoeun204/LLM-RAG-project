@@ -1,17 +1,10 @@
 from fastapi import FastAPI, UploadFile, File, Depends
-from fastapi.middleware.cors import CORSMiddleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List
 import shutil
 import os
+from fastapi.middleware.cors import CORSMiddleware
 
 import models
 from database import engine, SessionLocal
@@ -21,7 +14,18 @@ from analyzer import AnswerAnalyzer
 from quiz_generator import QuizGenerator
 
 models.Base.metadata.create_all(bind=engine)
+
+# 1. 여기서 app이 무조건 먼저 태어나야 해! (제일 중요)
 app = FastAPI(title="맞춤형 학습 진단 시스템 API")
+
+# 2. 태어난 app한테 허락 코드를 먹여주기!
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def get_db():
     db = SessionLocal()
