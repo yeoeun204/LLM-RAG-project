@@ -1,21 +1,24 @@
 from fastapi import FastAPI, UploadFile, File, Depends
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List
 import shutil
 import os
-class UserAnswerSubmit(BaseModel):
-    lecture_id: int
-    question_text: str
-    user_answer: str
 
 import models
 from database import engine, SessionLocal
 from preprocessor import DataPreprocessor
 from graph_builder import KnowledgeGraphBuilder
 from analyzer import AnswerAnalyzer
-
-from quiz_generator import QuizGenerator # <== 이거 추가!
+from quiz_generator import QuizGenerator
 
 models.Base.metadata.create_all(bind=engine)
 app = FastAPI(title="맞춤형 학습 진단 시스템 API")
@@ -27,7 +30,14 @@ def get_db():
     finally:
         db.close()
 
-# 데이터 전송 규격
+# ---------------------------------------------------------
+# [데이터 전송 규격 (그릇)]
+# ---------------------------------------------------------
+class UserAnswerSubmit(BaseModel):
+    lecture_id: int
+    question_text: str
+    user_answer: str
+
 class AnswerSubmission(BaseModel):
     user_id: int
     material_id: int
@@ -43,9 +53,11 @@ class FeedbackResponse(BaseModel):
 
 @app.get("/")
 def read_root():
-    return {"message": "서버가 정상 작동 중입니다."}
+    return {"message": "서버가 정상 작동 중입니다. Swagger UI(/docs)로 접속해주세요."}
 
-# [Phase 1] 강의 자료 업로드 및 지식 그래프 생성
+# ---------------------------------------------------------
+# [1단계] 강의자료 입력 및 지식 그래프 생성
+# ---------------------------------------------------------
 @app.post("/api/v1/materials", status_code=202)
 async def upload_material(user_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
     file_location = "temp_" + file.filename
@@ -71,31 +83,45 @@ async def upload_material(user_id: int, file: UploadFile = File(...), db: Sessio
         "extracted_concepts": extracted_concepts
     }
 
-# (여기는 원래 네가 가지고 있던 기존 업로드 코드)
-@app.post("/api/v1/materials", status_code=202)
-async def upload_material(user_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
-    return { ... }
+# ---------------------------------------------------------
+# [2단계] 퀴즈 생성 (해당 자료를 바탕으로 출제)
+# ---------------------------------------------------------
+@app.get("/api/v1/materials/{material_id}/quiz")
+async def create_quiz(material_id: int, db: Session = Depends(get_db)):
+    # 1. DB에서 해당 번호표의 강의 자료 꺼내오기
+    material = db.query(models.LectureMaterial).filter(
+        models.LectureMaterial.id == material_id
+    ).first()
 
-# ==========================================
-# 👇 방금 위 코드가 끝나는 줄 바로 아래에 이걸 통째로 붙여넣기! 👇
-# ==========================================
+    if not material:
+        return {"error": "해당 강의 자료를 찾을 수 없습니다."}
 
+    # 2. 퀴즈 생성기 가동 (내부적으로 3문제를 내도록 설정되었다고 가정)
+    quiz_gen = QuizGenerator()
+    quiz_content = quiz_gen.generate_quiz(material.raw_content)
+
+    return {
+        "material_id": material_id,
+        "status": "퀴즈 생성 완료!",
+        "quiz_data": quiz_content.split("\n")
+    }
+
+# ---------------------------------------------------------
+# [3단계] 정답 해설 및 피드백 (유저의 답안을 받고 채점)
+# ---------------------------------------------------------
 @app.post("/api/v1/quiz/grade")
 async def grade_quiz_answer(submit_data: UserAnswerSubmit):
-    # AI에게 채점과 해설을 부탁하는 프롬프트 작성
+    # 유저가 맞췄는지 틀렸는지, 보완점은 무엇인지 짚어주는 프롬프트
     evaluation_prompt = (
         "너는 친절한 대학 전공 과목 조교야. "
         "사용자가 다음 문제에 대해 답안을 제출했어.\n"
         "문제: {0}\n"
         "사용자 답안: {1}\n\n"
-        "이 답안이 정답인지 오답인지 판단하고, 왜 그런지 이유를 아주 상세하고 이해하기 쉽게 설명해줘."
+        "이 답안이 정답인지 오답인지 판단하고, 왜 틀렸는지 혹은 어떤 부분을 더 보완해야 하는지 상세히 설명해줘."
     ).format(submit_data.question_text, submit_data.user_answer)
     
-    # 랭체인(LangChain) 또는 LLM을 호출해서 프롬프트를 전달하는 부분
-    # 예시: ai_response = llm.predict(evaluation_prompt)
-    
-    # 임시 결과 반환 (나중에 AI 응답으로 교체할 곳!)
-    ai_response = "여기에 AI가 생성한 채점 결과와 맞춤형 해설이 들어갑니다."
+    # 향후 LangChain이나 LLM을 연결하여 evaluation_prompt를 던져주는 곳
+    ai_response = "AI가 분석한 정답 해설 및 보완점 피드백이 여기에 출력됩니다."
     
     return {
         "lecture_id": submit_data.lecture_id,
@@ -104,7 +130,9 @@ async def grade_quiz_answer(submit_data: UserAnswerSubmit):
         "ai_feedback": ai_response
     }
 
-# [Phase 2] 답변 제출 및 오답 패턴 분석
+# ---------------------------------------------------------
+# [추가 기능] 기존 오답 패턴 분석 및 리포트 (유지)
+# ---------------------------------------------------------
 @app.post("/api/v1/feedback/analyze")
 async def analyze_answer(submission: AnswerSubmission, db: Session = Depends(get_db)):
     analyzer = AnswerAnalyzer()
@@ -135,7 +163,6 @@ async def analyze_answer(submission: AnswerSubmission, db: Session = Depends(get
         "weak_point_concept": weak_node.concept_name
     }
 
-# [Phase 3] 학습 피드백 생성 & 조회
 @app.get("/api/v1/reports/{user_id}", response_model=List[FeedbackResponse])
 async def get_comprehensive_report(user_id: int, db: Session = Depends(get_db)):
     records = db.query(models.FeedbackLoop).filter(
@@ -152,7 +179,6 @@ async def get_comprehensive_report(user_id: int, db: Session = Depends(get_db)):
         ).first()
         weak_point_name = weak_node.concept_name if weak_node else "알 수 없는 개념"
         
-        # 문자열 결합 (f-string 사용 안 함)
         mock_suggested_content = "현재 '" + weak_point_name + "' 개념의 이해도가 낮습니다. 강의 PDF의 해당 섹션을 다시 참고하여 복습해 보세요."
         
         reports.append({
@@ -164,25 +190,3 @@ async def get_comprehensive_report(user_id: int, db: Session = Depends(get_db)):
         })
         
     return reports
-
-    # [Phase 4] 강의 자료 기반 맞춤형 퀴즈 생성 API
-@app.get("/api/v1/materials/{material_id}/quiz")
-async def create_quiz(material_id: int, db: Session = Depends(get_db)):
-
-    # 1. DB에서 해당 강의 자료의 전체 텍스트 꺼내오기
-    material = db.query(models.LectureMaterial).filter(
-        models.LectureMaterial.id == material_id
-    ).first()
-
-    if not material:
-        return {"error": "해당 강의 자료를 찾을 수 없습니다."}
-
-    # 2. 퀴즈 생성기 가동!
-    quiz_gen = QuizGenerator()
-    quiz_content = quiz_gen.generate_quiz(material.raw_content)
-
-    return {
-        "material_id": material_id,
-        "status": "퀴즈 생성 완료!",
-        "quiz_data": quiz_content.split("\n")
-    }

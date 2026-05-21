@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>맞춤형 학습 진단 시스템</title>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { text-align: center; color: #2c3e50; }
+        .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .step-title { color: #3498db; margin-top: 0; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px; }
+        input[type="file"], input[type="text"], input[type="number"] { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        button { background-color: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; width: 100%; }
+        button:hover { background-color: #2980b9; }
+        .result-box { background-color: #ecf0f1; padding: 15px; border-radius: 5px; margin-top: 10px; min-height: 50px; font-size: 14px; white-space: pre-wrap; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📚 AI 맞춤형 학습 진단</h1>
+
+    <div class="card" id="step1">
+        <h2 class="step-title">1단계: 강의자료 입력</h2>
+        <p>공부할 강의 자료(PDF 등)를 올려주세요.</p>
+        <label>유저 번호 (예: 1):</label>
+        <input type="number" id="userId" value="1">
+        <input type="file" id="fileInput">
+        <button onclick="uploadMaterial()">자료 업로드 및 학습 시작</button>
+        <div id="uploadResult" class="result-box hidden"></div>
+    </div>
+
+    <div class="card hidden" id="step2">
+        <h2 class="step-title">2단계: 맞춤형 퀴즈 풀기</h2>
+        <p>AI가 방금 올린 자료를 바탕으로 퀴즈를 출제합니다.</p>
+        <button onclick="generateQuiz()">퀴즈 출제하기</button>
+        <div id="quizResult" class="result-box hidden"></div>
+        
+        <div id="answerSection" class="hidden" style="margin-top:15px;">
+            <label>풀고 싶은 문제 내용을 복사해서 붙여넣으세요:</label>
+            <input type="text" id="questionText" placeholder="문제 내용을 여기에 입력">
+            <label>당신의 정답을 적어주세요:</label>
+            <input type="text" id="userAnswer" placeholder="정답 입력">
+            <button onclick="submitAnswer()">정답 제출하기</button>
+        </div>
+    </div>
+
+    <div class="card hidden" id="step3">
+        <h2 class="step-title">3단계: 정답 해설 및 피드백</h2>
+        <div id="feedbackResult" class="result-box">AI의 분석을 기다리는 중입니다...</div>
+    </div>
+</div>
+
+<script>
+    // ★★★ 여기에 너의 렌더(Render) 주소를 넣어줘! (끝에 / 슬래시는 빼고!) ★★★
+    const BASE_URL = "https://llm-rag-project.onrender.com"; 
+
+    // 서버에서 받은 자료 번호표를 저장해둘 변수
+    let currentLectureId = null;
+
+    // 1단계: 업로드 기능
+    async function uploadMaterial() {
+        const fileInput = document.getElementById('fileInput').files[0];
+        const userId = document.getElementById('userId').value;
+        const resultBox = document.getElementById('uploadResult');
+
+        if (!fileInput) {
+            alert("파일을 먼저 선택해주세요!");
+            return;
+        }
+
+        resultBox.classList.remove('hidden');
+        resultBox.innerText = "열심히 자료를 읽고 지식 그래프를 만드는 중입니다... (최대 1~2분 소요)";
+
+        const formData = new FormData();
+        formData.append("file", fileInput);
+
+        try {
+            const response = await fetch(BASE_URL + "/api/v1/materials?user_id=" + userId, {
+                method: "POST",
+                body: formData
+            });
+            const data = await response.json();
+            
+            // 번호표(lecture_id) 저장
+            currentLectureId = data.lecture_id; 
+            
+            resultBox.innerText = "성공! 발급된 자료 번호: " + currentLectureId + "\n\n이제 아래에서 퀴즈를 생성해보세요.";
+            
+            // 2단계 창 보여주기
+            document.getElementById('step2').classList.remove('hidden');
+        } catch (error) {
+            resultBox.innerText = "에러가 발생했습니다: " + error;
+        }
+    }
+
+    // 2단계: 퀴즈 생성 기능
+    async function generateQuiz() {
+        const resultBox = document.getElementById('quizResult');
+        resultBox.classList.remove('hidden');
+        resultBox.innerText = "AI 조교가 퀴즈를 출제하는 중입니다...";
+
+        try {
+            const response = await fetch(BASE_URL + "/api/v1/materials/" + currentLectureId + "/quiz");
+            const data = await response.json();
+            
+            // 퀴즈 데이터를 화면에 예쁘게 출력
+            if(data.quiz_data) {
+                resultBox.innerText = data.quiz_data.join("\n");
+                // 정답 적는 칸 보여주기
+                document.getElementById('answerSection').classList.remove('hidden');
+            } else {
+                resultBox.innerText = JSON.stringify(data);
+            }
+        } catch (error) {
+            resultBox.innerText = "에러가 발생했습니다: " + error;
+        }
+    }
+
+    // 3단계: 정답 제출 및 피드백 받기 기능
+    async function submitAnswer() {
+        const questionText = document.getElementById('questionText').value;
+        const userAnswer = document.getElementById('userAnswer').value;
+        const feedbackBox = document.getElementById('feedbackResult');
+
+        if(!questionText || !userAnswer) {
+            alert("문제 내용과 정답을 모두 입력해주세요!");
+            return;
+        }
+
+        // 3단계 창 보여주기
+        document.getElementById('step3').classList.remove('hidden');
+        feedbackBox.innerText = "답안을 분석하고 맞춤형 해설을 작성하는 중입니다...";
+
+        const requestBody = {
+            lecture_id: currentLectureId,
+            question_text: questionText,
+            user_answer: userAnswer
+        };
+
+        try {
+            const response = await fetch(BASE_URL + "/api/v1/quiz/grade", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(requestBody)
+            });
+            const data = await response.json();
+            
+            feedbackBox.innerText = "Q. " + data.question + "\n나의 답: " + data.user_answer + "\n\n[AI 조교의 해설]\n" + data.ai_feedback;
+        } catch (error) {
+            feedbackBox.innerText = "에러가 발생했습니다: " + error;
+        }
+    }
+</script>
+
+</body>
+</html>
