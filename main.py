@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List
 import shutil
 import os
+import math
 from fastapi.middleware.cors import CORSMiddleware
 
 import models
@@ -15,10 +16,9 @@ from quiz_generator import QuizGenerator
 
 models.Base.metadata.create_all(bind=engine)
 
-# 1. 여기서 app이 무조건 먼저 태어나야 해! (제일 중요)
+# 1. 앱 생성 및 CORS 허용 (순서 완벽 고정!)
 app = FastAPI(title="맞춤형 학습 진단 시스템 API")
 
-# 2. 태어난 app한테 허락 코드를 먹여주기!
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -41,6 +41,7 @@ class UserAnswerSubmit(BaseModel):
     lecture_id: int
     question_text: str
     user_answer: str
+    time_taken_seconds: float = 60.0  # (추가됨) 문제 푸는 데 걸린 시간! 기본값 60초
 
 class AnswerSubmission(BaseModel):
     user_id: int
@@ -58,6 +59,41 @@ class FeedbackResponse(BaseModel):
 @app.get("/")
 def read_root():
     return {"message": "서버가 정상 작동 중입니다. Swagger UI(/docs)로 접속해주세요."}
+
+# ---------------------------------------------------------
+# [가중치 엔진] 팀원이 기획한 최종 엔진 수학 공식
+# ---------------------------------------------------------
+def calculate_final_weight(is_correct: bool, error_type: str, time_taken: float) -> float:
+    # 1. 기본 설정값 (팀원 기획서 기준)
+    w1 = 0.3  # 지식구조 가중치 비율
+    w2 = 0.7  # 동적 반응 가중치 비율
+    w_kg = 0.5  # 지식 그래프 기본 점수 (임시 평균값)
+    v_i = 0.0   # 역량 노드 가산점
+    t_rec = 60.0 # 권장 문제 풀이 시간 (초)
+    
+    # 정답을 맞췄다면 위험도(오답률 E_i)는 0, 틀렸다면 1
+    e_i = 0.0 if is_correct else 1.0
+    
+    # 2. S_i: 단순 실수(Slip) vs 근본적 오해(Mistake) 필터
+    s_i = 1.0
+    if error_type == "SLIP":
+        s_i = 0.5  # 단순 실수면 가중치 감쇄
+    elif error_type == "MISTAKE":
+        s_i = 1.0  # 근본적 오해면 가중치 유지
+        
+    # 3. T_i: 인지 과부하 지수 (시그모이드 함수 적용)
+    # 수식: 1 / (1 + e^(-(t_taken / t_rec - 1)))
+    try:
+        power = -(time_taken / t_rec - 1)
+        t_i = 1.0 / (1.0 + math.exp(power))
+    except OverflowError:
+        t_i = 1.0 if time_taken > t_rec else 0.0
+        
+    # 4. W_final: 최종 심각도 가중치 계산
+    w_final = w1 * (w_kg + v_i) + w2 * ((e_i * s_i) * t_i)
+    
+    # 소수점 둘째 자리까지 반올림하여 반환
+    return round(w_final, 2)
 
 # ---------------------------------------------------------
 # [1단계] 강의자료 입력 및 지식 그래프 생성
@@ -92,7 +128,6 @@ async def upload_material(user_id: int, file: UploadFile = File(...), db: Sessio
 # ---------------------------------------------------------
 @app.get("/api/v1/materials/{material_id}/quiz")
 async def create_quiz(material_id: int, db: Session = Depends(get_db)):
-    # 1. DB에서 해당 번호표의 강의 자료 꺼내오기
     material = db.query(models.LectureMaterial).filter(
         models.LectureMaterial.id == material_id
     ).first()
@@ -100,7 +135,6 @@ async def create_quiz(material_id: int, db: Session = Depends(get_db)):
     if not material:
         return {"error": "해당 강의 자료를 찾을 수 없습니다."}
 
-    # 2. 퀴즈 생성기 가동 (내부적으로 3문제를 내도록 설정되었다고 가정)
     quiz_gen = QuizGenerator()
     quiz_content = quiz_gen.generate_quiz(material.raw_content)
 
@@ -111,31 +145,65 @@ async def create_quiz(material_id: int, db: Session = Depends(get_db)):
     }
 
 # ---------------------------------------------------------
-# [3단계] 정답 해설 및 피드백 (유저의 답안을 받고 채점)
+# [3단계] 정답 해설 및 피드백 (팀원의 가중치 엔진 적용!)
 # ---------------------------------------------------------
 @app.post("/api/v1/quiz/grade")
 async def grade_quiz_answer(submit_data: UserAnswerSubmit):
-    # 유저가 맞췄는지 틀렸는지, 보완점은 무엇인지 짚어주는 프롬프트
+    # 1. AI 조교에게 채점과 동시에 '실수'인지 '오해'인지 분류를 지시하는 프롬프트
     evaluation_prompt = (
-        "너는 친절한 대학 전공 과목 조교야. "
-        "사용자가 다음 문제에 대해 답안을 제출했어.\n"
+        "너는 친절한 대학 전공 과목 조교야. 사용자가 문제에 대한 답을 제출했어.\n"
         "문제: {0}\n"
         "사용자 답안: {1}\n\n"
-        "이 답안이 정답인지 오답인지 판단하고, 왜 틀렸는지 혹은 어떤 부분을 더 보완해야 하는지 상세히 설명해줘."
+        "이 답안이 정답인지 오답인지 상세히 해설해줘.\n"
+        "단, 마지막 줄에는 반드시 다음 중 하나를 판별해서 텍스트로 적어줘:\n"
+        "- 단순 계산 실수나 기호 혼동(Slip)으로 틀렸다면: [SLIP]\n"
+        "- 근본적인 개념을 몰라서(Mistake) 틀렸다면: [MISTAKE]\n"
+        "- 정답을 맞췄다면: [CORRECT]"
     ).format(submit_data.question_text, submit_data.user_answer)
     
-    # 향후 LangChain이나 LLM을 연결하여 evaluation_prompt를 던져주는 곳
-    ai_response = "AI가 분석한 정답 해설 및 보완점 피드백이 여기에 출력됩니다."
+    # 임시 AI 응답 (나중에 실제 랭체인 연결 시 대체될 부분)
+    # 테스트를 위해 임의로 MISTAKE 상황을 가정해두었어!
+    mock_ai_response = "사용자님, 공식은 맞게 접근하셨으나 핵심 개념의 적용이 잘못되었습니다.\n[MISTAKE]"
     
+    # 2. AI 응답에서 에러 타입(Slip vs Mistake) 추출하기
+    error_type = "UNKNOWN"
+    is_correct = False
+    if "[SLIP]" in mock_ai_response:
+        error_type = "SLIP"
+    elif "[MISTAKE]" in mock_ai_response:
+        error_type = "MISTAKE"
+    elif "[CORRECT]" in mock_ai_response:
+        error_type = "CORRECT"
+        is_correct = True
+        
+    # 3. 팀원의 최종 가중치 엔진 가동!
+    final_weight_score = calculate_final_weight(
+        is_correct=is_correct,
+        error_type=error_type,
+        time_taken=submit_data.time_taken_seconds
+    )
+    
+    # 4. 점수에 따른 조건부 의사결정 (제어 논리)
+    decision_message = ""
+    if is_correct:
+        decision_message = "훌륭합니다! 개념을 완벽히 이해하셨네요."
+    elif final_weight_score >= 0.5:
+        decision_message = "위험도 점수: " + str(final_weight_score) + "점. 심각한 인지 마비 상태입니다. 해당 챕터의 선행 개념부터 다시 학습할 것을 권장합니다."
+    else:
+        decision_message = "위험도 점수: " + str(final_weight_score) + "점. 단순 실수로 보입니다. 오답 노트만 확인하고 다음 단계로 넘어가도 좋습니다."
+
     return {
         "lecture_id": submit_data.lecture_id,
         "question": submit_data.question_text,
         "user_answer": submit_data.user_answer,
-        "ai_feedback": ai_response
+        "error_type_detected": error_type,
+        "final_danger_score": final_weight_score,
+        "ai_feedback": mock_ai_response,
+        "system_decision": decision_message
     }
 
 # ---------------------------------------------------------
-# [추가 기능] 기존 오답 패턴 분석 및 리포트 (유지)
+# [추가 기능] 기존 리포트 조회 로직 유지
 # ---------------------------------------------------------
 @app.post("/api/v1/feedback/analyze")
 async def analyze_answer(submission: AnswerSubmission, db: Session = Depends(get_db)):
