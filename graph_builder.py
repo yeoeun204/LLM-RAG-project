@@ -7,7 +7,7 @@ from models import KnowledgeNode, LectureMaterial
 
 class KnowledgeGraphBuilder:
     def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
+        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
 
     def extract_and_save_concepts(self, text_chunks, db: Session, material_id: int):
         # 1. 텍스트 합치기 (비용과 속도를 위해 첫 3페이지만 샘플로 분석)
