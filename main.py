@@ -111,17 +111,65 @@ async def upload_material(user_id: int, file: UploadFile = File(...), db: Sessio
         "extracted_concepts": extracted_concepts
     }
 
+# =========================================================
+# 👇 바로 이 부분이 완벽하게 수정된 '퀴즈 생성 + 좀비 파서' 코드입니다! 
+# =========================================================
 @app.get("/api/v1/materials/{material_id}/quiz")
 async def create_quiz(material_id: int, db: Session = Depends(get_db)):
     material = db.query(models.LectureMaterial).filter(models.LectureMaterial.id == material_id).first()
     if not material: return {"error": "강의 자료 없음"}
+    
+    import re # 데이터 강제 추출을 위한 정규표현식 라이브러리 추가
+    
     quiz_gen = QuizGenerator()
     raw_quiz_content = quiz_gen.generate_quiz(material.raw_content)
+    
+    # 1. AI가 눈치 없이 붙인 마크다운 껍데기 벗기기
+    cleaned_content = raw_quiz_content.strip()
+    if cleaned_content.startswith("```json"):
+        cleaned_content = cleaned_content[7:]
+    elif cleaned_content.startswith("```"):
+        cleaned_content = cleaned_content[3:]
+    if cleaned_content.endswith("```"):
+        cleaned_content = cleaned_content[:-3]
+    cleaned_content = cleaned_content.strip()
+
     try:
-        quiz_data = json.loads(raw_quiz_content)
+        # 1차 시도: 깔끔하게 JSON으로 변환해보기
+        quiz_data = json.loads(cleaned_content)
     except json.JSONDecodeError:
-        quiz_data = {"question": "문제를 불러오지 못했습니다.", "correct_answer": "", "required_keywords": [], "explanation": ""}
+        # 2차 시도: AI가 형식을 엉망으로 보냈어도 멱살 잡고 핵심 데이터만 강제로 뜯어냄!
+        try:
+            q_match = re.search(r'"question"\s*:\s*"([^"]+)"', raw_quiz_content)
+            a_match = re.search(r'"correct_answer"\s*:\s*"([^"]+)"', raw_quiz_content)
+            k_match = re.search(r'"required_keywords"\s*:\s*\[(.*?)\]', raw_quiz_content, re.DOTALL)
+            e_match = re.search(r'"explanation"\s*:\s*"([^"]+)"', raw_quiz_content)
+
+            question = q_match.group(1) if q_match else "문제를 생성했으나 형식이 깨졌습니다. AI의 답변: " + raw_quiz_content[:50]
+            answer = a_match.group(1) if a_match else "정답 데이터 추출 실패"
+            explanation = e_match.group(1) if e_match else "해설 추출 실패"
+
+            keywords = []
+            if k_match:
+                keywords = re.findall(r'"([^"]+)"', k_match.group(1))
+
+            quiz_data = {
+                "question": question,
+                "correct_answer": answer,
+                "required_keywords": keywords,
+                "explanation": explanation
+            }
+        except Exception:
+            # 3차 최후의 수단: 무슨 짓을 해도 실패하면 AI가 한 말을 통째로 문제로 띄워버림
+            quiz_data = {
+                "question": raw_quiz_content,
+                "correct_answer": "AI 답변 형식 오류로 자동 채점 불가",
+                "required_keywords": [],
+                "explanation": "해석 불가"
+            }
+
     return {"material_id": material_id, "status": "퀴즈 생성 완료!", "quiz_data": quiz_data}
+# =========================================================
 
 @app.post("/api/v1/quiz/grade")
 async def grade_quiz_answer(submit_data: UserAnswerSubmit):
