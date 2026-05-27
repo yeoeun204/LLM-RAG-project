@@ -21,7 +21,7 @@
 <body>
 
 <div class="container">
-    <h1>📚 AI 맞춤형 학습 진단 (사용자용)</h1>
+    <h1>📚 AI 맞춤형 학습 진단 (버전 3.0 동적 융합)</h1>
 
     <div class="card" id="step1">
         <div class="step-title">1. 강의 파일 입력</div>
@@ -36,7 +36,6 @@
         <div class="step-title">2. 퀴즈 생성 및 풀이</div>
         <p style="font-size: 14px; color: #666;">AI가 지식 그래프를 바탕으로 퀴즈를 출제합니다.</p>
         <button id="generateBtn" onclick="generateQuiz()">맞춤형 퀴즈 출제받기</button>
-        
         <div id="quizResult" class="result-box hidden" style="background-color: transparent; padding: 0;"></div>
     </div>
 
@@ -47,19 +46,18 @@
 </div>
 
 <script>
-    // 렌더 서버 주소 연결 완료!
+    // 🚨 본인의 Render 서버 주소로 반드시 확인/수정해주세요!
     const BASE_URL = "https://llm-rag-project.onrender.com";
 
     let currentLectureId = null;
     let questionStartTime = 0; 
-    let currentCorrectAnswer = "";
-    let currentExplanation = "";
     let currentQuestionText = "";
-    let quizArray = [];
-    let currentIndex = 0;
+    let currentCorrectAnswer = "";
+    let currentKeywords = [];
+    let currentExplanation = "";
 
     // ==========================================
-    // [1단계] 파일 업로드 및 지식 학습
+    // [1단계] 파일 업로드
     // ==========================================
     async function uploadMaterial() {
         const fileInput = document.getElementById('fileInput').files[0];
@@ -86,7 +84,6 @@
             
             currentLectureId = data.lecture_id; 
             resultBox.innerText = "✅ 학습 완료! (자료 번호: " + currentLectureId + ")\n아래에서 퀴즈를 출제받으세요.";
-            
             document.getElementById('step2').classList.remove('hidden');
         } catch (error) {
             resultBox.innerText = "에러 발생: 서버가 잠들어있을 수 있습니다. 잠시 후 다시 시도해주세요.";
@@ -94,7 +91,7 @@
     }
 
     // ==========================================
-    // [2단계] 퀴즈 생성 버튼 클릭 시
+    // [2단계] 동적 퀴즈 받아오기 (JSON 방식)
     // ==========================================
     async function generateQuiz() {
         const resultBox = document.getElementById('quizResult');
@@ -108,13 +105,17 @@
             const response = await fetch(BASE_URL + "/api/v1/materials/" + currentLectureId + "/quiz");
             const data = await response.json();
             
-            if(data.quiz_data) {
-                // 백엔드에서 온 퀴즈 텍스트를 대화형 함수로 넘김!
-                const rawQuizText = data.quiz_data.join("\n");
-                startInteractiveQuiz(rawQuizText);
-                btn.style.display = 'none'; // 퀴즈가 시작되면 생성 버튼은 숨김
+            if(data.quiz_data && data.quiz_data.question) {
+                // 💡 더 이상 텍스트를 자르지 않습니다! JSON에서 바로 빼옵니다.
+                currentQuestionText = data.quiz_data.question;
+                currentCorrectAnswer = data.quiz_data.correct_answer;
+                currentKeywords = data.quiz_data.required_keywords;
+                currentExplanation = data.quiz_data.explanation;
+                
+                showQuestion();
+                btn.style.display = 'none'; 
             } else {
-                resultBox.innerHTML = "퀴즈를 불러오지 못했습니다.";
+                resultBox.innerHTML = "퀴즈를 불러오지 못했습니다. 파일 내용이 너무 길어 AI가 시간 초과되었을 수 있습니다.";
                 btn.disabled = false;
             }
         } catch (error) {
@@ -124,24 +125,109 @@
     }
 
     // ==========================================
-    // [대화형 퀴즈 엔진] 텍스트 쪼개고 화면에 그리기
+    // [화면 렌더링] 한 문제 띄우기
     // ==========================================
-    function startInteractiveQuiz(rawQuizText) {
-        // "Q1.", "Q2." 기준으로 쪼개기
-        quizArray = rawQuizText.split(/Q\d+\./).filter(text => text.trim() !== "");
-        currentIndex = 0; 
-        showQuestion(currentIndex);
+    function showQuestion() {
+        const displayArea = document.getElementById("quizResult"); 
+        document.getElementById('step3').classList.add('hidden');
+        questionStartTime = Date.now(); 
+
+        displayArea.innerHTML = `
+            <div style="background-color: white; border-radius: 8px; padding: 25px; border: 1px solid #ddd; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                <h3 style="color: #2c3e50; margin-top: 0;">📝 맞춤형 심층 퀴즈</h3>
+                <pre style="white-space: pre-wrap; font-family: inherit; font-size: 16px; line-height: 1.6; color: #333; margin-bottom:0;">${currentQuestionText}</pre>
+                
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px dashed #ccc; display: flex; flex-direction: column; gap: 10px;">
+                    <textarea id="interactiveUserAnswer" placeholder="서술형으로 정답과 논리를 입력해주세요." style="width: 100%; height: 80px; padding: 12px; border: 1px solid #ccc; border-radius: 5px; font-size: 15px; resize: none;"></textarea>
+                    <button onclick="submitInteractiveAnswer()" style="padding: 12px 25px; cursor: pointer; background-color: #e67e22; color: white; border: none; border-radius: 5px; font-size: 16px;">제출 및 하이브리드 채점 🚀</button>
+                </div>
+
+                <div id="interactiveFeedbackBox" style="display: none; margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border-left: 5px solid #ccc;">
+                    <p style="margin-bottom:10px; font-size:15px;"><strong>💡 모범 정답:</strong> <span id="interactiveCorrectText" style="color:#2980b9;"></span></p>
+                    <p style="margin-bottom:0; font-size:14px; color:#555;"><strong>📖 해설:</strong> <span id="interactiveExplanationText"></span></p>
+                </div>
+            </div>
+        `;
     }
 
-    function showQuestion(index) {
-        const displayArea = document.getElementById("quizResult"); 
+    // ==========================================
+    // [3단계] 채점 요청 및 UI 결과 통제
+    // ==========================================
+    async function submitInteractiveAnswer() {
+        const userAnswerInput = document.getElementById("interactiveUserAnswer");
+        const userAnswer = userAnswerInput.value.trim();
         
-        // 문제 넘어갈 때 3단계 피드백 창은 다시 숨겨두기
-        document.getElementById('step3').classList.add('hidden');
+        if (!userAnswer) {
+            alert("답안을 작성해주세요!");
+            return;
+        }
 
-        // 모든 문제를 다 풀었을 때
-        if (index >= quizArray.length) {
-            displayArea.innerHTML = `
-                <div style='text-align:center; padding: 30px; background: white; border-radius: 8px;'>
-                    <h2 style='color: #28a745;'>🎉 모든 퀴즈를 완료했습니다!</h2>
-                    <p>정말 수고하셨습니다
+        // 중복 클릭 방지
+        userAnswerInput.disabled = true; 
+
+        // 숨겨둔 해설 창 열기
+        const feedbackBox = document.getElementById("interactiveFeedbackBox");
+        document.getElementById("interactiveCorrectText").innerText = currentCorrectAnswer;
+        document.getElementById("interactiveExplanationText").innerText = currentExplanation;
+        feedbackBox.style.display = "block";
+
+        const timeTakenSeconds = (Date.now() - questionStartTime) / 1000;
+        
+        const step3Box = document.getElementById('step3');
+        const feedbackResult = document.getElementById('feedbackResult');
+        step3Box.classList.remove('hidden');
+        feedbackResult.className = 'result-box'; // 초기화
+        feedbackResult.innerText = "제출 완료! (소요 시간: " + Math.round(timeTakenSeconds) + "초)\n조원의 하이브리드 알고리즘(유사도+키워드+위계)이 분석 중입니다... 🤖";
+
+        // 💡 백엔드로 보낼 핵심 데이터 패키지 (숨겨둔 정답과 키워드 포함)
+        const requestBody = {
+            lecture_id: currentLectureId || 1, // 백엔드 Pydantic 에러 방지용 기본값
+            question_text: currentQuestionText,
+            user_answer: userAnswer,
+            time_taken_seconds: timeTakenSeconds,
+            correct_answer: currentCorrectAnswer,
+            required_keywords: currentKeywords,
+            explanation: currentExplanation
+        };
+
+        try {
+            const response = await fetch(BASE_URL + "/api/v1/quiz/grade", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(requestBody)
+            });
+            const data = await response.json();
+            
+            // 백엔드가 판별한 상태(System Decision)에 따라 박스 색상 다르게 칠하기
+            if (data.system_decision.includes("위험도 점수")) {
+                if (data.final_danger_score >= 0.5) {
+                    // 심각한 오개념 (ERROR)
+                    feedbackResult.style.backgroundColor = '#fdedec';
+                    feedbackResult.style.color = '#c0392b';
+                    feedbackResult.style.borderLeft = '5px solid #c0392b';
+                } else {
+                    // 단순 실수 (WARNING)
+                    feedbackResult.style.backgroundColor = '#fff3cd';
+                    feedbackResult.style.color = '#856404';
+                    feedbackResult.style.borderLeft = '5px solid #ffeeba';
+                }
+            } else {
+                // 완벽한 정답 (MASTERED)
+                feedbackResult.style.backgroundColor = '#d4edda';
+                feedbackResult.style.color = '#155724';
+                feedbackResult.style.borderLeft = '5px solid #c3e6cb';
+            }
+
+            // 최종 피드백 텍스트 결합해서 띄우기
+            feedbackResult.innerText = 
+                "📊 [시스템 진단 결과]\n" + data.system_decision + "\n\n" +
+                data.ai_feedback;
+
+        } catch (error) {
+            feedbackResult.innerText = "심층 오답 분석 중 예기치 못한 통신 에러가 발생했습니다.";
+        }
+    }
+</script>
+
+</body>
+</html>
