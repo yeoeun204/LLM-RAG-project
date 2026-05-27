@@ -8,6 +8,8 @@ class QuizGenerator:
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash", 
             temperature=0.7
+            api_key=os.environ.get("GOOGLE_API_KEY"),
+            api_version="v1"
         )
 
     def generate_quiz(self, text_content: str):
