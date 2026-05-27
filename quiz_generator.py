@@ -1,20 +1,20 @@
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
-from google.api_core import client_options as client_options_lib
 
 class QuizGenerator:
     def __init__(self):
-        # 동일하게 API 엔드포인트를 고정했습니다.
+        # 가장 깔끔하게 모델만 선언합니다. (Pydantic 에러 방지)
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-flash", 
-            temperature=0.7,
-            client_options=client_options_lib.ClientOptions(api_endpoint="generativelanguage.googleapis.com")
+            temperature=0.7
         )
 
     def generate_quiz(self, text_content: str):
+        # 1. 너무 길면 구글이 힘들어하니까 앞부분 15000자만 잘라서 줌
         sample_text = text_content[:15000]
         
+        # 2. 범용 퀴즈 생성 프롬프트
         template_str = """
         너는 대학생을 위한 AI 학습 조교야. 다음 대학교 강의 자료를 바탕으로, 배운 '핵심 전공 지식'을 깊이 있게 점검할 수 있는 [주관식 단답/서술형 퀴즈 딱 1문제]만 출제해.
 
@@ -38,6 +38,7 @@ class QuizGenerator:
         prompt = PromptTemplate.from_template(template_str)
         chain = prompt | self.llm
         
+        # 3. AI 퀴즈 생성!
         response = chain.invoke({"text": sample_text})
         
         return response.content
