@@ -5,8 +5,8 @@ from langchain_core.prompts import PromptTemplate
 class QuizGenerator:
     def __init__(self):
         # 우리가 드디어 성공시킨 바로 그 최신 모델! (퀴즈니까 창의력을 위해 temperature를 0.7로 살짝 올림)
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-002", temperature=0.7)
-        
+        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.7)
+
     def generate_quiz(self, text_content: str):
         # 1. 너무 길면 구글이 힘들어하니까 앞부분 15000자만 잘라서 줌
         sample_text = text_content[:15000]
